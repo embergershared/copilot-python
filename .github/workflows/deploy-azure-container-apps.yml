@@ -1,0 +1,71 @@
+name: Deploy Azure Container Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Container image tag to deploy
+        required: false
+        default: latest
+  push:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - pyproject.toml
+      - src/**
+      - .github/workflows/deploy-azure-container-apps.yml
+      - infra/**
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  IMAGE_NAME: copilot-python-app
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment: azure-prod
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name "${{ vars.AZURE_CONTAINER_REGISTRY_NAME }}"
+
+      - name: Build and push container image
+        env:
+          REGISTRY_LOGIN_SERVER: >-
+            ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || github.sha }}
+        run: |
+          docker build -t "$REGISTRY_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG" .
+          docker push "$REGISTRY_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG"
+
+      - name: Deploy to Azure Container Apps
+        env:
+          REGISTRY_LOGIN_SERVER: >-
+            ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || github.sha }}
+        run: |
+          az containerapp update \
+            --name "${{ vars.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "$REGISTRY_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG"
+
+      - name: Smoke test health endpoint
+        run: |
+          curl --fail --retry 5 --retry-delay 10 \
+            "${{ vars.AZURE_CONTAINER_APP_URL }}/health"
+

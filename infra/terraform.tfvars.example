@@ -1,0 +1,8 @@
+subscription_id     = "00000000-0000-0000-0000-000000000000"
+location            = "eastus"
+resource_group_name = "rg-copilot-python-app"
+app_name            = "copilot-python-app"
+container_image     = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+github_repository   = "OWNER/REPOSITORY"
+github_environment  = "azure-prod"
+

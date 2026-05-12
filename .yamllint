@@ -1,0 +1,11 @@
+extends: default
+
+rules:
+  document-start: disable
+  empty-lines: disable
+  line-length:
+    max: 120
+  new-lines: disable
+  truthy:
+    allowed-values: ["true", "false", "on", "off"]
+
