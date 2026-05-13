@@ -3,7 +3,7 @@ name: "testing-telemetry-sinks"
 description: "Test logging/telemetry sinks (Seq, Azure Monitor, OTLP) without real network I/O"
 domain: "quality"
 confidence: "high"
-source: "earned (logging module test plan, 2026-05-13)"
+source: "earned (logging module test plan + implementation, 2026-05-13)"
 ---
 
 ## Context
@@ -47,10 +47,9 @@ def capture_json_logs(request) -> Generator[JsonCaptureHandler, None, None]:
     logger.removeHandler(handler)
 ```
 
-### 2. Isolated logging state
+### 2. Isolated logging state (global autouse)
 
-Python logging is global. Without isolation, handler registrations from one test bleed into the
-next. Always reset between tests:
+Place in `tests/conftest.py` as `autouse=True`. This is safe for non-logging tests too.
 
 ```python
 @pytest.fixture(autouse=True)
@@ -64,99 +63,138 @@ def isolated_logging() -> Generator[None, None, None]:
     logging.Logger.manager.loggerDict.clear()
 ```
 
-### 3. Mock HTTP sink with pytest-httpserver
+**Key insight:** `logging.Logger.manager.loggerDict.clear()` is necessary — without it,
+named loggers created during a test retain their handlers even after `root.handlers` is
+restored.
+
+### 3. Mock HTTP sink via monkeypatch (no extra deps)
+
+For per-event POST sinks (like CLEF/Seq), `monkeypatch` on `requests.post` is sufficient
+and avoids adding `pytest-httpserver` to dev deps.
 
 ```python
-from pytest_httpserver import HTTPServer
-import pytest
+def fake_post(url: str, **kwargs: Any) -> MagicMock:
+    calls.append({"url": url, **kwargs})
+    return MagicMock(raise_for_status=MagicMock())
 
-@pytest.fixture
-def mock_seq_server(httpserver: HTTPServer):
-    httpserver.expect_request("/api/events/raw", method="POST").respond_with_data("", status=201)
-    return httpserver
-
-@pytest.fixture
-def seq_down_url() -> str:
-    """Return a URL that will always refuse connections."""
-    import socket
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return f"http://127.0.0.1:{port}"
+monkeypatch.setattr(requests, "post", fake_post)
 ```
 
-### 4. SDK-level exporter mock (Azure Monitor)
+**Why this works:** When a module does `import requests as _requests`, `_requests` IS the
+same module object as `requests`. Patching `requests.post` patches `_requests.post` too.
+This means you patch at the top-level module, not at the `_handlers.seq` module.
 
-Never make real Azure calls from tests. Monkeypatch the SDK configure function:
+For failure tests:
+```python
+monkeypatch.setattr(requests, "post", MagicMock(side_effect=requests.ConnectionError("x")))
+```
+
+### 4. Rate-limiter tests with time.monotonic
+
+When the handler uses `time.monotonic()` to throttle warnings, use a closure-based mock:
 
 ```python
+def test_rate_limit() -> None:
+    tick = 0.0
+
+    def monotonic_mock() -> float:
+        return tick  # reads tick at call time — closure by reference
+
+    monkeypatch.setattr(time, "monotonic", monotonic_mock)
+    handler._last_warning_at = -1_000_000.0  # force first warning to fire
+
+    handler.emit(record)           # t=0 → warning fires
+    tick = 30.0
+    handler.emit(record)           # t=30 → still within 60s window, suppressed
+    tick = 61.0
+    handler.emit(record)           # t=61 → window expired, warning fires again
+```
+
+**Key:** reassign `tick` directly — no second `setattr` needed because Python closures
+read the variable cell at call time, not at definition time.
+
+Always reset `handler._last_warning_at = -1_000_000.0` at the start of each test so the
+first emit() predictably fires a warning regardless of test order.
+
+### 5. SDK-level exporter mock (Azure Monitor)
+
+Never make real Azure calls from tests. Monkeypatch the module-level flag and function:
+
+```python
+import emm_logging._handlers.azure as azure_mod
+
 @pytest.fixture
-def mock_azure_monitor_configure(monkeypatch):
+def mock_azure_monitor(monkeypatch):
     calls: list[dict] = []
     def fake_configure(**kwargs) -> None:
         calls.append(kwargs)
-    monkeypatch.setattr(
-        "azure.monitor.opentelemetry.configure_azure_monitor",
-        fake_configure,
-    )
+    monkeypatch.setattr(azure_mod, "_HAS_AZURE_MONITOR", True)
+    monkeypatch.setattr(azure_mod, "configure_azure_monitor", fake_configure)
     return calls
 ```
 
-### 5. Portability / no-FastAPI import check
-
+For the "package missing" path:
 ```python
-import sys
-import importlib
-
-def test_module_does_not_import_fastapi() -> None:
-    # Must run in isolation — if FastAPI was imported earlier, snapshot won't catch it.
-    # Use sys_modules_snapshot fixture to guard against session-level pollution.
-    before = set(sys.modules.keys())
-    importlib.import_module("your_logging_module")
-    after = set(sys.modules.keys())
-    new_imports = after - before
-    forbidden = {"fastapi", "starlette", "uvicorn"}
-    assert not (new_imports & forbidden), f"Forbidden imports: {new_imports & forbidden}"
+monkeypatch.setattr(azure_mod, "_HAS_AZURE_MONITOR", False)
+monkeypatch.setattr(azure_mod, "configure_azure_monitor", None)
 ```
 
-### 6. Write tests for BOTH degradation contracts; let architect pick
+### 6. Portability / no-FastAPI import check (subprocess, not sys.modules snapshot)
 
-When the degradation behavior (drop vs. buffer) is not yet decided, write labeled tests for both:
+**NEVER** use `sys.modules` snapshot for portability tests within a pytest session.
+If FastAPI is imported by conftest or any earlier test, the snapshot will miss it.
+Use subprocess isolation instead:
 
 ```python
-def test_seq_sink_drops_event_silently_when_server_unreachable(seq_down_url) -> None:
-    # CONTRACT A: drop
-    # ... configure with seq_down_url, log, assert no exception, assert event not buffered
+import os, subprocess, sys
+from pathlib import Path
 
-def test_seq_sink_buffers_and_delivers_when_server_recovers(mock_seq_server) -> None:
-    # CONTRACT B: buffer
-    # ... configure with down URL, log, bring server up, assert event eventually arrives
+_SRC_DIR = str(Path(__file__).parent.parent.parent / "src")
+
+def test_no_fastapi() -> None:
+    script = (
+        "import sys; "
+        f"sys.path.insert(0, r'{_SRC_DIR}'); "
+        "before = set(sys.modules.keys()); "
+        "import your_logging_module; "
+        "new = set(sys.modules.keys()) - before; "
+        "assert 'fastapi' not in new, f'fastapi imported: {new & {\"fastapi\"}}'"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True,
+        env={**os.environ, "PYTHONPATH": _SRC_DIR},
+    )
+    assert result.returncode == 0, result.stderr
 ```
 
-Delete the non-chosen contract once the architect decides. Keep both until then — do not bake
-assumptions.
+Set `PYTHONPATH` explicitly so the subprocess can import the source tree even if the
+package isn't pip-installed in the active venv.
 
 ## Anti-Patterns
 
 - ❌ Using real Seq/Azure URLs in unit tests (flaky, environment-dependent, slow)
 - ❌ Forgetting to remove handlers in teardown (handler leak causes false positives)
 - ❌ Relying on import-order guarantees for portability tests (FastAPI imported by conftest
-  will hide violations)
+  will hide violations — use subprocess)
 - ❌ Using `logging.disable()` to suppress output in tests — this masks real coverage gaps
 - ❌ Assuming 100% coverage on network I/O paths — mock at the SDK boundary, not the socket level
 - ❌ Hardcoding JSON field names without confirming with the module author (timestamp field name
   varies between python-json-logger versions and CLEF format)
+- ❌ Not resetting `handler._last_warning_at` in rate-limit tests — test order dependency
+- ❌ Using `time.sleep(61)` to test a 60s throttle window — always monkeypatch `time.monotonic`
 
 ## Dependencies
 
 Add to `pyproject.toml` `[project.optional-dependencies]` dev section:
-- `pytest-httpserver>=1.0.0` — HTTP sink mocking
-- `python-json-logger>=2.0.0` — runtime dep for module under test
+- `python-json-logger>=3.0.0` — runtime dep for module under test (already in base deps)
+- No additional test deps needed for HTTP mocking — `monkeypatch` on `requests` is sufficient
 
 ## Coverage guidance
 
 - Target 85% branch coverage for new telemetry modules (higher than repo floor)
-- `# pragma: no cover` only for genuinely unreachable SDK internals
+- `# pragma: no cover` only for genuinely unreachable SDK internals (global safety-net catch blocks)
 - Branch coverage (`branch = true`) is more meaningful than line coverage for
   conditional sink-wiring logic
+- `_fallback_console_handler()` called only from `# pragma: no cover` safety-net is acceptable
+  to leave uncovered — do not add a test that imports the private function just to hit it
