@@ -889,3 +889,60 @@ These ambiguities must be resolved before tests are written. I'm flagging them n
 
 10. **python-json-logger optional or required?** — If it's an optional dependency, we need a test for the "not installed" graceful fallback. If required, simpler.
 
+---
+
+### 2026-05-13T09:45:57-05:00: Reusable logging module — Emmanuel's resolutions (round 1 design phase)
+**By:** Squad (Coordinator) — capturing user resolutions to Ripley/Parker/Hudson open questions
+**Status:** ✅ Approved — Bishop cleared to implement
+
+**Why:** Round 1 produced an architecture proposal (Ripley), a sink wiring brief (Parker), and a 54-test plan (Hudson). Emmanuel resolved the architectural fork and the 7 follow-up questions that gated implementation. These choices are now binding for Bishop's implementation pass.
+
+**Resolutions:**
+
+1. **Seq transport — CLEF over HTTP** (Ripley's design wins). The base module uses `python-json-logger` for JSON formatting and a custom ~80-line CLEF/HTTP handler in `_handlers/seq.py` (POSTs to `{seq_url}/api/events/raw`). Parker's OTLP path is rejected for v1 — pulling the OTel SDK as soon as you want Seq violates the portability/lightweight goal. Azure Monitor still uses `azure-monitor-opentelemetry` (which uses OTel under the hood, but only when the `[azure]` extra is installed).
+
+2. **Package name — `emm_logging`** (replaces working name `ember_logging`). Import path: `from emm_logging import LoggingSettings, configure_logging`. Env var prefix: `LOG_*` (see #4 below). Directory: `src/emm_logging/`.
+
+3. **Seq batching — per-event POST for v1.** No micro-batching, no in-process queue. Add batching only when volume evidence demands it.
+
+4. **Env var prefix — `LOG_*`** for the new module, kept independent of the app's `APP_*` namespace. This is intentional: the module must be drop-in for other apps that have their own prefix conventions. Two prefixes in the same process is a feature.
+
+5. **Packaging shape — one wheel ships both** packages for v1. Add `emm_logging` to the existing wheel's `packages` list in `pyproject.toml`. No hatch workspace gymnastics now. Split into a separate distribution when the API stabilizes and PyPI publication is on the table.
+
+6. **JSON console field names — human-readable** (`timestamp`, `level`, `message`, `logger`, `extra...`). CLEF-on-wire to Seq stays at the standard `@t`/`@l`/`@m`/`@mt` schema — that's internal to the Seq sink and not negotiable. Console is for humans and grep; CLEF is for the Seq UI.
+
+7. **Configure-twice behavior — replace handlers** (idempotent in the sense that the second call lands you in a known state, but it does mutate). Matches Ripley's `setup.py` sketch and is what Hudson tests against.
+
+8. **Shutdown / flush hook — none in v1.** Per-event Seq POST means there's no buffer to flush. Azure Monitor's distro registers its own `atexit` handler. No `shutdown()` / `flush()` in the public API. Document this explicitly so callers don't add a useless lifespan hook.
+
+9. **Out of scope (re-confirmed from Ripley's YAGNI list):** trace-id correlation, file sinks, dynamic log level endpoint, custom context managers, metrics/tracing export, async/buffered Seq shipping.
+
+**Implementation order for Bishop (files 1–10 from Ripley's handoff):**
+
+Phase A — new package (`src/emm_logging/`):
+1. `src/emm_logging/__init__.py` — public API re-exports (`LoggingSettings`, `configure_logging`, `LoggingResult`)
+2. `src/emm_logging/config.py` — `LoggingSettings` pydantic-settings model with `LOG_` prefix
+3. `src/emm_logging/setup.py` — `configure_logging()` + `LoggingResult` dataclass
+4. `src/emm_logging/_handlers/__init__.py`
+5. `src/emm_logging/_handlers/console.py` — JSON console handler via `python-json-logger`, fields `timestamp/level/message/logger`
+6. `src/emm_logging/_handlers/seq.py` — CLEF/HTTP handler (POST per event, guarded `requests` import)
+7. `src/emm_logging/_handlers/azure.py` — `azure-monitor-opentelemetry` integration (guarded import)
+
+Phase B — packaging + migration:
+8. `pyproject.toml` — add `python-json-logger` to base deps, add optional extras `[seq]` (`requests`) and `[azure]` (`azure-monitor-opentelemetry>=1.6.0`), add `emm_logging` to wheel packages
+9. `src/copilot_python_app/telemetry.py` — replace body with thin delegation to `emm_logging.configure_logging`
+10. `src/copilot_python_app/main.py` — update import to call the new wrapper function
+
+Test files (11–14 in Ripley's handoff) are **NOT** Bishop's scope — Hudson owns test code. Hudson will follow up after Bishop's implementation lands.
+
+**Reviewer:** Ripley will gate the resulting code change before it ships. Reviewer rejection lockout applies — if Ripley rejects, a different agent revises.
+
+**Open questions remaining:** None blocking implementation. Trace-id correlation and async batching are documented as v2+ explicitly.
+
+---
+
+### 2026-05-13T09:45:57-05:00 — `emm_logging` implementation notes (Bishop)
+
+- Updated `pyproject.toml` optional dependencies so `azure-monitor-opentelemetry` remains optional and moved `azure-identity` out of the `azure` extra to match the locked implementation spec for this logging module pass.
+- Verified the requested import-leak assertion required a minor command correction (`set(sys.modules)-mods`) because the provided expression subtracted a set from a dict.
+
