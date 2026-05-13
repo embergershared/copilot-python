@@ -53,3 +53,7 @@ The `.devcontainer/devcontainer.json` uses the Microsoft Dev Containers Python 3
 
 The Docker image runs the FastAPI app with Uvicorn on port `8000`. Use `docker compose up --build` for a local container run with the same health endpoint used by Azure probes.
 
+## Azure MCP Server deployment
+
+To deploy the official Azure MCP Server to Azure Container Apps for Copilot Studio with OAuth On-Behalf-Of user delegation, follow [docs/azure-mcp-obo-container-app.md](docs/azure-mcp-obo-container-app.md). That deployment is intentionally separate from this FastAPI service because it uses the official Azure MCP Server image and Entra app-registration model.
+

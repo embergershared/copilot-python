@@ -11,4 +11,5 @@ build/
 dist/
 htmlcov/
 search-results.txt
+generated/
 
