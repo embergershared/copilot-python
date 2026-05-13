@@ -1,35 +1,11 @@
-"""Logging and telemetry setup."""
+"""FastAPI-specific logging setup — delegates to emm_logging."""
 
-import logging
-from logging.config import dictConfig
+from emm_logging import LoggingSettings, configure_logging
 
 
-def configure_logging(log_level: str) -> None:
-    """Configure structured console logging for the application."""
+def setup_app_logging(log_level: str) -> None:
+    """Configure logging for the FastAPI app using the shared module."""
 
-    dictConfig(
-        {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "default": {
-                    "format": (
-                        "%(asctime)s %(levelname)s %(name)s "
-                        "event=%(message)s"
-                    )
-                }
-            },
-            "handlers": {
-                "console": {
-                    "class": "logging.StreamHandler",
-                    "formatter": "default",
-                }
-            },
-            "root": {
-                "handlers": ["console"],
-                "level": log_level,
-            },
-        }
-    )
-    logging.getLogger(__name__).debug("logging_configured")
+    settings = LoggingSettings(level=log_level)  # type: ignore[arg-type]
+    configure_logging(settings)
 

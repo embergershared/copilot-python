@@ -4,14 +4,14 @@ from fastapi import FastAPI
 
 from copilot_python_app.config import Settings, get_settings
 from copilot_python_app.health import HealthResponse, get_health
-from copilot_python_app.telemetry import configure_logging
+from copilot_python_app.telemetry import setup_app_logging
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Create and configure the FastAPI application."""
 
     active_settings = settings or get_settings()
-    configure_logging(active_settings.log_level)
+    setup_app_logging(active_settings.log_level)
 
     app = FastAPI(
         title=active_settings.name,

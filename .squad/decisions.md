@@ -946,3 +946,56 @@ Test files (11–14 in Ripley's handoff) are **NOT** Bishop's scope — Hudson o
 - Updated `pyproject.toml` optional dependencies so `azure-monitor-opentelemetry` remains optional and moved `azure-identity` out of the `azure` extra to match the locked implementation spec for this logging module pass.
 - Verified the requested import-leak assertion required a minor command correction (`set(sys.modules)-mods`) because the provided expression subtracted a set from a dict.
 
+
+
+---
+
+### 2026-05-13T09:45:57-05:00: Reviewer gate — emm_logging implementation
+**By:** Ripley (reviewer gate)
+**Verdict:** APPROVED
+**Why:** Bishop's implementation and Hudson's test suite faithfully execute the round-1 design and Emmanuel's resolutions across all 31 checklist items. The public API is exactly `LoggingSettings`, `configure_logging`, `LoggingResult` — nothing more. Sink composition is handler-list-driven with three concrete handlers (console, Seq CLEF/HTTP, Azure Monitor distro), all optional imports are guarded with `_HAS_*` booleans, `LoggingResult` is a dataclass, console JSON uses the mandated `timestamp/level/message/logger` field names, CLEF stays internal to the Seq sink, configure-twice replaces handlers, and no shutdown/flush hook exists. Zero FastAPI/Starlette/Uvicorn imports in `src/emm_logging/` (verified by grep and by Hudson's real subprocess portability tests). No out-of-scope features snuck in — no trace correlation, file sinks, dynamic log level, context managers, metrics, or async batching. All tooling is green: ruff clean, mypy strict clean (12 files), 135 tests passed in 18s, 98.35% branch coverage on `emm_logging` with the only uncovered branch (`setup.py:29-32` fallback console) being the defensive global safety net — legitimately untestable without fault injection.
+
+**Checklist outcomes (1–31):**
+
+1. ✅ Module at `src/emm_logging/`, `pyproject.toml` line 42 adds it to wheel packages, extras `[seq]` and `[azure]` present.
+2. ✅ `__all__ = ["LoggingResult", "LoggingSettings", "configure_logging"]` — exactly three symbols.
+3. ✅ `env_prefix="LOG_"`, `extra="ignore"`, all fields match spec with Literal types and safe defaults.
+4. ✅ Handler-list driven by settings. Console always attached. Seq/Azure conditional.
+5. ✅ CLEF over HTTP, per-event POST to `{seq_url}/api/events/raw`, `@t`/`@l`/`@mt`/`@m`/`@x` wire format.
+6. ✅ Console JSON: `timestamp`, `level`, `message`, `logger`. No CLEF keys in console output.
+7. ✅ Azure uses `configure_azure_monitor()`, guarded import, missing package → warning in `LoggingResult.warnings`.
+8. ✅ `root_logger.handlers = configured_handlers` replaces on second call. Tests confirm handler count is stable.
+9. ✅ No `shutdown()` or `flush()` in public API.
+10. ✅ Console always on. Seq failures rate-limited (60s) via `_warn_rate_limited`. `configure_logging` never raises.
+11. ✅ Zero FastAPI/Starlette/Uvicorn imports. Grep clean. Subprocess portability tests real.
+12. ✅ All public functions have return type annotations. mypy strict passes.
+13. ✅ `_HAS_PYTHON_JSON_LOGGER`, `_HAS_REQUESTS`, `_HAS_AZURE_MONITOR` — consistent pattern.
+14. ✅ `@dataclass` on `LoggingResult` (setup.py:17).
+15. ✅ `_handlers/` is private. No external imports from it (grep clean).
+16. ✅ No `print()` anywhere in `src/emm_logging/`.
+17. ✅ Tests test behavior (sampled 5 across suite — all assert observable outcomes, not internal wiring).
+18. ✅ Edge cases: UUID/datetime serialization, configure-twice, Seq POST throttle, Azure missing package, portability.
+19. ✅ Portability test spawns subprocess, checks `sys.modules` for fastapi/starlette/uvicorn after import.
+20. ✅ Throttle test monkeypatches `time.monotonic` — no real waiting.
+21. ✅ 98.35% branch coverage. Uncovered: `setup.py:29-32` (defensive fallback). Accepted.
+22. ✅ No flaky tests. All mocked — no real network, no real time, no real environment.
+23. ✅ Nothing from out-of-scope list implemented.
+24. ✅ No premature abstraction — three concrete handlers, no registries, no base classes.
+25. ✅ `ruff check .` — all checks passed.
+26. ✅ `mypy src/` — success, 12 source files, no issues.
+27. ✅ `pytest` — 135 passed in 18.20s.
+28. ✅ `pytest --cov=emm_logging --cov-branch` — 98.35%.
+29. ✅ Sanity import emits one JSON log line with correct field names, returns `LoggingResult`.
+30. ✅ One-line docstring on every public function/class.
+31. ⚠️ No standalone README for `emm_logging`. Docstrings are functional but a usage-example doc would help adoption.
+
+**Cleared to commit and merge.**
+
+**Suggestions (non-blocking):**
+- Add a brief `src/emm_logging/README.md` or expand the module docstring in `__init__.py` with a 10-line usage example (settings from env, configure, log). Another dev could use it from docstrings alone, but a quick-start example saves 5 minutes.
+- The `_fallback_console_handler` (setup.py:26-32) could be tested with a targeted fault-injection test that monkeypatches `build_console_handler` to raise, but the `pragma: no cover` is reasonable for v1.
+
+**Future work surfaced:**
+- v2 backlog: trace-id correlation, micro-batched Seq shipping (when volume evidence demands it), standalone PyPI distribution.
+- Consider adding `emm_logging` to `[tool.coverage.run] source` and `[tool.pytest.ini_options] addopts` so default `pytest` runs report coverage for both packages.
+

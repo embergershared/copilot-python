@@ -13,12 +13,15 @@ authors = [{ name = "Project maintainers" }]
 dependencies = [
   "fastapi>=0.115.0",
   "pydantic-settings>=2.6.0",
+  "python-json-logger>=3.0.0",
   "uvicorn[standard]>=0.32.0",
 ]
 
 [project.optional-dependencies]
+seq = [
+  "requests>=2.32.0",
+]
 azure = [
-  "azure-identity>=1.19.0",
   "azure-monitor-opentelemetry>=1.6.0",
 ]
 dev = [
@@ -36,7 +39,7 @@ dev = [
 Homepage = "https://github.com/"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/copilot_python_app"]
+packages = ["src/copilot_python_app", "src/emm_logging"]
 
 [tool.ruff]
 line-length = 100
