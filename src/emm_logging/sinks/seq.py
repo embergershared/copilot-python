@@ -1,4 +1,4 @@
-"""Seq sink handler for CLEF over HTTP."""
+"""Seq sink for CLEF-over-HTTP delivery."""
 
 from __future__ import annotations
 
@@ -115,8 +115,13 @@ class SeqHandler(logging.Handler):
         sys.stderr.write(f"WARNING: {message}\n")
 
 
-def build_seq_handler(settings: LoggingSettings) -> tuple[logging.Handler | None, list[str]]:
-    """Build a Seq handler when configured and available."""
+def build_seq_sink(settings: LoggingSettings) -> tuple[logging.Handler | None, list[str]]:
+    """Build a Seq handler when configured and available.
+
+    Returns ``(None, warnings)`` when the Seq URL is unset or the optional
+    ``requests`` dependency is missing. The warnings list explains the reason
+    so operators can correct misconfiguration.
+    """
 
     warnings: list[str] = []
     if settings.seq_url is None:

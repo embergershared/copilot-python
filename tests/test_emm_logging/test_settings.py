@@ -14,12 +14,16 @@ def test_default_level_is_info() -> None:
     assert LoggingSettings().level == "INFO"
 
 
-def test_default_format_is_json() -> None:
-    assert LoggingSettings().format == "json"
+def test_default_console_format_is_text() -> None:
+    assert LoggingSettings().console_format == "text"
 
 
 def test_default_service_name_is_unknown_service() -> None:
     assert LoggingSettings().service_name == "unknown-service"
+
+
+def test_default_service_version_is_zero() -> None:
+    assert LoggingSettings().service_version == "0.0.0"
 
 
 def test_default_seq_url_is_none() -> None:
@@ -38,8 +42,9 @@ def test_all_defaults_without_any_log_env_vars(monkeypatch: pytest.MonkeyPatch) 
     """Unset every LOG_* var — safe defaults must still apply."""
     for var in [
         "LOG_LEVEL",
-        "LOG_FORMAT",
+        "LOG_CONSOLE_FORMAT",
         "LOG_SERVICE_NAME",
+        "LOG_SERVICE_VERSION",
         "LOG_SEQ_URL",
         "LOG_SEQ_API_KEY",
         "LOG_AZURE_CONNECTION_STRING",
@@ -48,8 +53,9 @@ def test_all_defaults_without_any_log_env_vars(monkeypatch: pytest.MonkeyPatch) 
 
     s = LoggingSettings()
     assert s.level == "INFO"
-    assert s.format == "json"
+    assert s.console_format == "text"
     assert s.service_name == "unknown-service"
+    assert s.service_version == "0.0.0"
     assert s.seq_url is None
     assert s.seq_api_key is None
     assert s.azure_connection_string is None
@@ -65,14 +71,19 @@ def test_log_level_accepted_from_env(level: str, monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize("fmt", ["json", "text"])
-def test_log_format_accepted_from_env(fmt: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LOG_FORMAT", fmt)
-    assert LoggingSettings().format == fmt
+def test_log_console_format_accepted_from_env(fmt: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_CONSOLE_FORMAT", fmt)
+    assert LoggingSettings().console_format == fmt
 
 
 def test_log_service_name_parsed_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOG_SERVICE_NAME", "my-api")
     assert LoggingSettings().service_name == "my-api"
+
+
+def test_log_service_version_parsed_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_SERVICE_VERSION", "9.8.7")
+    assert LoggingSettings().service_version == "9.8.7"
 
 
 def test_log_seq_url_parsed_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,8 +117,8 @@ def test_invalid_level_raises_validation_error(monkeypatch: pytest.MonkeyPatch) 
         LoggingSettings()
 
 
-def test_invalid_format_raises_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LOG_FORMAT", "xml")
+def test_invalid_console_format_raises_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_CONSOLE_FORMAT", "xml")
     with pytest.raises(ValidationError):
         LoggingSettings()
 

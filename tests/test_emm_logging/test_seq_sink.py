@@ -13,7 +13,7 @@ import pytest
 import requests
 
 from emm_logging import LoggingSettings
-from emm_logging._handlers.seq import SeqHandler, build_seq_handler
+from emm_logging.sinks.seq import SeqHandler, build_seq_sink
 
 
 def _make_record(
@@ -36,40 +36,33 @@ def _make_record(
     return record
 
 
-def _mock_post_ok() -> MagicMock:
-    """Return a fake requests.post that succeeds with a 201 response."""
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    return MagicMock(return_value=mock_resp)
+# ── build_seq_sink ────────────────────────────────────────────────────────────
 
 
-# ── build_seq_handler ─────────────────────────────────────────────────────────
-
-
-def test_build_seq_handler_returns_none_when_no_url() -> None:
-    handler, warnings = build_seq_handler(LoggingSettings())
+def test_build_seq_sink_returns_none_when_no_url() -> None:
+    handler, warnings = build_seq_sink(LoggingSettings())
     assert handler is None
     assert warnings == []
 
 
-def test_build_seq_handler_returns_handler_when_url_set(
+def test_build_seq_sink_returns_handler_when_url_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LOG_SEQ_URL", "http://seq:5341")
-    handler, warnings = build_seq_handler(LoggingSettings())
+    handler, warnings = build_seq_sink(LoggingSettings())
     assert isinstance(handler, SeqHandler)
     assert warnings == []
 
 
-def test_build_seq_handler_warns_when_requests_missing(
+def test_build_seq_sink_warns_when_requests_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import emm_logging._handlers.seq as seq_mod
+    import emm_logging.sinks.seq as seq_mod
 
     monkeypatch.setenv("LOG_SEQ_URL", "http://seq:5341")
     monkeypatch.setattr(seq_mod, "_HAS_REQUESTS", False)
 
-    handler, warnings = build_seq_handler(LoggingSettings())
+    handler, warnings = build_seq_sink(LoggingSettings())
 
     assert handler is None
     assert any("requests" in w.lower() for w in warnings)
@@ -362,7 +355,7 @@ def test_emit_warns_and_returns_when_requests_disabled_post_construction(
     requests was installed, then the module flag was patched (e.g. in tests).
     The handler must not raise and must rate-limit its warning.
     """
-    import emm_logging._handlers.seq as seq_mod
+    import emm_logging.sinks.seq as seq_mod
 
     handler = SeqHandler("http://seq:5341", None)
     handler._last_warning_at = -1_000_000.0

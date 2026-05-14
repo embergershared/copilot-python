@@ -1,4 +1,4 @@
-"""Azure Monitor wiring helpers for emm_logging."""
+"""Azure Monitor sink wiring for emm_logging."""
 
 from __future__ import annotations
 
@@ -16,10 +16,16 @@ except ImportError:  # pragma: no cover - protected optional import
     _HAS_AZURE_MONITOR = False
 
 
-def configure_azure_sink(
+def build_azure_sink(
     settings: LoggingSettings, *, logger_name: str
 ) -> tuple[bool, list[str]]:
-    """Configure Azure Monitor logging integration when requested."""
+    """Configure Azure Monitor logging integration when requested.
+
+    Unlike the console and Seq sinks, Azure Monitor is wired through the
+    OpenTelemetry SDK and does not return a ``logging.Handler``. The first
+    return value is a flag indicating whether the SDK was successfully
+    configured.
+    """
 
     warnings: list[str] = []
     if settings.azure_connection_string is None:

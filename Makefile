@@ -26,7 +26,7 @@ coverage:
 	pytest --cov=copilot_python_app --cov-report=html --cov-report=term-missing
 
 run:
-	uvicorn copilot_python_app.main:app --host 0.0.0.0 --port 8000 --reload
+	$(PYTHON) src/main.py serve --host 0.0.0.0 --port 8000 --reload
 
 security:
 	bandit -r src

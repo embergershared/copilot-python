@@ -71,10 +71,13 @@ def test_importing_emm_logging_does_not_import_uvicorn() -> None:
 def test_emm_logging_public_api_importable_in_isolation() -> None:
     """Smoke-test: the public API symbols exist in a clean process."""
     result = _run_isolation_check(
-        "from emm_logging import LoggingSettings, configure_logging, LoggingResult; "
+        "from emm_logging import "
+        "LoggingSettings, setup_logging, LoggingSinks, get_logger, timestamp_prefix; "
         "assert LoggingSettings is not None; "
-        "assert configure_logging is not None; "
-        "assert LoggingResult is not None"
+        "assert setup_logging is not None; "
+        "assert LoggingSinks is not None; "
+        "assert get_logger is not None; "
+        "assert timestamp_prefix is not None"
     )
     assert result.returncode == 0, (
         f"Public API broken in isolation.\n"

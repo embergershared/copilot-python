@@ -1,4 +1,4 @@
-"""Tests for the console handler — JSON fields, timestamps, extras, fallback."""
+"""Tests for the console sink — JSON fields, timestamps, extras, fallback."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from uuid import UUID
 import pytest
 
 from emm_logging import LoggingSettings
-from emm_logging._handlers.console import build_console_handler
+from emm_logging.sinks.console import build_console_sink
 
 
 def _make_record(
@@ -40,8 +40,8 @@ def _json_output(
     settings: LoggingSettings | None = None,
 ) -> dict[str, Any]:
     """Build console handler with json format and return parsed output."""
-    s = settings or LoggingSettings(format="json")
-    handler, _ = build_console_handler(s)
+    s = settings or LoggingSettings(console_format="json")
+    handler, _ = build_console_sink(s)
     assert handler.formatter is not None
     return dict(json.loads(handler.formatter.format(record)))
 
@@ -142,7 +142,7 @@ def test_extra_datetime_serialized_without_error() -> None:
 
 
 def test_text_format_is_not_valid_json() -> None:
-    handler, _ = build_console_handler(LoggingSettings(format="text"))
+    handler, _ = build_console_sink(LoggingSettings(console_format="text"))
     assert handler.formatter is not None
     output = handler.formatter.format(_make_record(msg="plain text line"))
     with pytest.raises(json.JSONDecodeError):
@@ -150,14 +150,14 @@ def test_text_format_is_not_valid_json() -> None:
 
 
 def test_text_format_contains_log_message() -> None:
-    handler, _ = build_console_handler(LoggingSettings(format="text"))
+    handler, _ = build_console_sink(LoggingSettings(console_format="text"))
     assert handler.formatter is not None
     output = handler.formatter.format(_make_record(msg="the text content"))
     assert "the text content" in output
 
 
 def test_text_format_returns_no_warnings() -> None:
-    _, warnings = build_console_handler(LoggingSettings(format="text"))
+    _, warnings = build_console_sink(LoggingSettings(console_format="text"))
     assert warnings == []
 
 
@@ -167,12 +167,12 @@ def test_text_format_returns_no_warnings() -> None:
 def test_missing_json_logger_produces_degradation_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import emm_logging._handlers.console as console_mod
+    import emm_logging.sinks.console as console_mod
 
     monkeypatch.setattr(console_mod, "_HAS_PYTHON_JSON_LOGGER", False)
     monkeypatch.setattr(console_mod, "JsonFormatter", None)
 
-    _, warnings = build_console_handler(LoggingSettings(format="json"))
+    _, warnings = build_console_sink(LoggingSettings(console_format="json"))
 
     assert len(warnings) == 1
     assert "python-json-logger" in warnings[0].lower()
@@ -181,12 +181,12 @@ def test_missing_json_logger_produces_degradation_warning(
 def test_missing_json_logger_falls_back_to_text_formatter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import emm_logging._handlers.console as console_mod
+    import emm_logging.sinks.console as console_mod
 
     monkeypatch.setattr(console_mod, "_HAS_PYTHON_JSON_LOGGER", False)
     monkeypatch.setattr(console_mod, "JsonFormatter", None)
 
-    handler, _ = build_console_handler(LoggingSettings(format="json"))
+    handler, _ = build_console_sink(LoggingSettings(console_format="json"))
     assert handler.formatter is not None
     output = handler.formatter.format(_make_record(msg="fallback"))
     # Fallback is text — must not be valid JSON
@@ -194,20 +194,101 @@ def test_missing_json_logger_falls_back_to_text_formatter(
         json.loads(output)
 
 
-# ── build_console_handler return shape ───────────────────────────────────────
+# ── build_console_sink return shape ──────────────────────────────────────────
 
 
-def test_build_console_handler_returns_tuple() -> None:
-    result = build_console_handler(LoggingSettings())
+def test_build_console_sink_returns_tuple() -> None:
+    result = build_console_sink(LoggingSettings())
     assert isinstance(result, tuple)
     assert len(result) == 2
 
 
-def test_build_console_handler_handler_is_logging_handler() -> None:
-    handler, _ = build_console_handler(LoggingSettings())
+def test_build_console_sink_handler_is_logging_handler() -> None:
+    handler, _ = build_console_sink(LoggingSettings())
     assert isinstance(handler, logging.Handler)
 
 
-def test_build_console_handler_warnings_is_list() -> None:
-    _, warnings = build_console_handler(LoggingSettings())
+def test_build_console_sink_warnings_is_list() -> None:
+    _, warnings = build_console_sink(LoggingSettings())
     assert isinstance(warnings, list)
+
+
+# ── ANSI color on text format ─────────────────────────────────────────────────
+
+
+_ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _format_text(record: logging.LogRecord) -> str:
+    handler, _ = build_console_sink(LoggingSettings(console_format="text"))
+    assert handler.formatter is not None
+    return handler.formatter.format(record)
+
+
+def test_text_format_has_no_ansi_codes_when_stdout_is_not_a_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+    output = _format_text(_make_record(msg="plain"))
+    assert _ANSI_PATTERN.search(output) is None
+
+
+def test_text_format_has_ansi_codes_when_stdout_is_a_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True, raising=False)
+    output = _format_text(_make_record(msg="colored", level=logging.INFO))
+    assert "\x1b[32m" in output  # green for INFO
+    assert "\x1b[0m" in output  # reset
+
+
+def test_no_color_env_disables_ansi_even_on_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True, raising=False)
+    output = _format_text(_make_record(msg="plain"))
+    assert _ANSI_PATTERN.search(output) is None
+
+
+def test_force_color_env_enables_ansi_when_not_a_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+    output = _format_text(_make_record(msg="forced", level=logging.INFO))
+    assert "\x1b[32m" in output
+
+
+@pytest.mark.parametrize(
+    ("level", "color"),
+    [
+        (logging.DEBUG, "\x1b[36m"),
+        (logging.INFO, "\x1b[32m"),
+        (logging.WARNING, "\x1b[33m"),
+        (logging.ERROR, "\x1b[31m"),
+        (logging.CRITICAL, "\x1b[1;31m"),
+    ],
+)
+def test_each_level_uses_distinct_color(
+    level: int,
+    color: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    output = _format_text(_make_record(level=level))
+    assert color in output
+
+
+def test_color_formatter_restores_levelname_for_downstream_handlers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seq sink reads ``record.levelname`` directly — must see the unmutated value."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    record = _make_record(level=logging.WARNING)
+    _format_text(record)
+    assert record.levelname == "WARNING"

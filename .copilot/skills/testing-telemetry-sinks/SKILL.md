@@ -67,6 +67,28 @@ def isolated_logging() -> Generator[None, None, None]:
 named loggers created during a test retain their handlers even after `root.handlers` is
 restored.
 
+**⚠ Gotcha — module-level cached loggers + caplog DEBUG capture:** `loggerDict.clear()`
+removes loggers from the manager dict but does NOT touch their internal `Logger._cache`.
+If a module caches its logger at import time
+(e.g., `_logger = logging.getLogger("emm_settings.sources")`) and an early test calls
+`_logger.debug(...)` while the effective level is `WARNING`, the cache gets
+`{10: False}`. A later test that raises root level to `DEBUG` via
+`caplog.at_level(logging.DEBUG)` then sees no records because `isEnabledFor(DEBUG)`
+returns the stale cached `False`. Fix it with a sub-package autouse fixture that wipes
+the cache:
+
+```python
+@pytest.fixture(autouse=True)
+def reset_emm_settings_loggers() -> Generator[None, None, None]:
+    import emm_settings.dotenv as _dotenv_mod
+    import emm_settings.sources as _sources_mod
+    for mod in (_dotenv_mod, _sources_mod):
+        cache = getattr(mod._logger, "_cache", None)
+        if isinstance(cache, dict):
+            cache.clear()
+    yield
+```
+
 ### 3. Mock HTTP sink via monkeypatch (no extra deps)
 
 For per-event POST sinks (like CLEF/Seq), `monkeypatch` on `requests.post` is sufficient
@@ -82,7 +104,7 @@ monkeypatch.setattr(requests, "post", fake_post)
 
 **Why this works:** When a module does `import requests as _requests`, `_requests` IS the
 same module object as `requests`. Patching `requests.post` patches `_requests.post` too.
-This means you patch at the top-level module, not at the `_handlers.seq` module.
+This means you patch at the top-level module, not at the `sinks.seq` module.
 
 For failure tests:
 ```python
@@ -118,10 +140,11 @@ first emit() predictably fires a warning regardless of test order.
 
 ### 5. SDK-level exporter mock (Azure Monitor)
 
-Never make real Azure calls from tests. Monkeypatch the module-level flag and function:
+Never make real Azure calls from tests. Monkeypatch the module-level flag and function on
+the public `sinks.azure` module:
 
 ```python
-import emm_logging._handlers.azure as azure_mod
+import emm_logging.sinks.azure as azure_mod
 
 @pytest.fixture
 def mock_azure_monitor(monkeypatch):

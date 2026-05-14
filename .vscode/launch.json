@@ -5,9 +5,9 @@
       "name": "FastAPI: Debug app in dev container",
       "type": "debugpy",
       "request": "launch",
-      "module": "uvicorn",
+      "program": "${workspaceFolder}/src/main.py",
       "args": [
-        "copilot_python_app.main:app",
+        "serve",
         "--reload",
         "--host",
         "0.0.0.0",
@@ -18,7 +18,7 @@
         "PYTHONPATH": "${workspaceFolder}/src"
       },
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "console": "externalTerminal",
       "justMyCode": true,
       "subProcess": true,
       "serverReadyAction": {

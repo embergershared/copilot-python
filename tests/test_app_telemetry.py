@@ -1,36 +1,67 @@
-"""Integration tests — FastAPI app still starts and responds correctly
-after the emm_logging wiring was introduced.
-"""
+"""Integration tests — FastAPI app boots through the new bootstrap pipeline."""
 
 from __future__ import annotations
 
+import importlib
 import logging
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+import copilot_python_app.main as main_mod
 from copilot_python_app.config import Settings
 from copilot_python_app.main import create_app
-from copilot_python_app.telemetry import setup_app_logging
 
-# ── setup_app_logging ─────────────────────────────────────────────────────────
-
-
-def test_setup_app_logging_configures_root_logger() -> None:
-    setup_app_logging("INFO")
-    assert len(logging.getLogger().handlers) >= 1
+# ── bootstrap wiring ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("level", ["DEBUG", "INFO", "WARNING", "ERROR"])
-def test_setup_app_logging_accepts_valid_level(level: str) -> None:
-    setup_app_logging(level)  # must not raise
+def test_bootstrap_invokes_dotenv_setup_logging_and_log_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_bootstrap must call dotenv → setup_logging → log_settings in order."""
+
+    calls: list[str] = []
+
+    def fake_load_dotenv(*args: Any, **kwargs: Any) -> list[Any]:
+        calls.append("load_dotenv_files")
+        return []
+
+    def fake_setup_logging(*args: Any, **kwargs: Any) -> Any:
+        calls.append("setup_logging")
+        return None
+
+    def fake_log_settings(*args: Any, **kwargs: Any) -> None:
+        calls.append("log_settings")
+
+    monkeypatch.setattr(main_mod, "load_dotenv_files", fake_load_dotenv)
+    monkeypatch.setattr(main_mod, "setup_logging", fake_setup_logging)
+    monkeypatch.setattr(main_mod, "log_settings", fake_log_settings)
+
+    main_mod._bootstrap()
+
+    assert calls == ["load_dotenv_files", "setup_logging", "log_settings"]
+
+
+def test_bootstrap_returns_settings_instance() -> None:
+    settings = main_mod._bootstrap()
+    assert isinstance(settings, Settings)
+
+
+def test_app_module_import_runs_bootstrap_side_effect() -> None:
+    """Importing copilot_python_app.main must yield a configured FastAPI app."""
+
+    reloaded = importlib.reload(main_mod)
+    assert reloaded.app is not None
+    assert hasattr(reloaded, "_settings")
+    assert isinstance(reloaded._settings, Settings)
 
 
 # ── app startup ───────────────────────────────────────────────────────────────
 
 
 def test_create_app_starts_cleanly_with_emm_logging() -> None:
-    """App creation must not raise even with the new setup_app_logging wiring."""
+    """App creation must not raise even with the bootstrap pipeline already run."""
     app = create_app(Settings(name="test-svc", environment="test", version="0.0.1"))
     assert app is not None
 

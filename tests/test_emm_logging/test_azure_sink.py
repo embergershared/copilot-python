@@ -6,15 +6,15 @@ from typing import Any
 
 import pytest
 
-import emm_logging._handlers.azure as _azure_mod
+import emm_logging.sinks.azure as _azure_mod
 from emm_logging import LoggingSettings
-from emm_logging._handlers.azure import configure_azure_sink
+from emm_logging.sinks.azure import build_azure_sink
 
 # ── no connection string ──────────────────────────────────────────────────────
 
 
 def test_returns_false_when_no_connection_string() -> None:
-    enabled, warnings = configure_azure_sink(LoggingSettings(), logger_name="test")
+    enabled, warnings = build_azure_sink(LoggingSettings(), logger_name="test")
     assert enabled is False
     assert warnings == []
 
@@ -29,7 +29,7 @@ def test_returns_false_when_azure_package_missing(
     monkeypatch.setattr(_azure_mod, "_HAS_AZURE_MONITOR", False)
     monkeypatch.setattr(_azure_mod, "configure_azure_monitor", None)
 
-    enabled, _warnings = configure_azure_sink(LoggingSettings(), logger_name="svc")
+    enabled, _warnings = build_azure_sink(LoggingSettings(), logger_name="svc")
 
     assert enabled is False
 
@@ -39,7 +39,7 @@ def test_warning_describes_missing_package(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(_azure_mod, "_HAS_AZURE_MONITOR", False)
     monkeypatch.setattr(_azure_mod, "configure_azure_monitor", None)
 
-    _, warnings = configure_azure_sink(LoggingSettings(), logger_name="svc")
+    _, warnings = build_azure_sink(LoggingSettings(), logger_name="svc")
 
     assert len(warnings) == 1
     w = warnings[0].lower()
@@ -56,7 +56,7 @@ def test_warning_is_not_an_exception_when_package_missing(
     monkeypatch.setattr(_azure_mod, "configure_azure_monitor", None)
 
     # Must not raise — this is the core graceful-degradation contract
-    result = configure_azure_sink(LoggingSettings(), logger_name="svc")
+    result = build_azure_sink(LoggingSettings(), logger_name="svc")
     assert isinstance(result, tuple)
 
 
@@ -75,7 +75,7 @@ def test_returns_true_when_mock_package_present(
     monkeypatch.setattr(_azure_mod, "_HAS_AZURE_MONITOR", True)
     monkeypatch.setattr(_azure_mod, "configure_azure_monitor", fake_configure)
 
-    enabled, warnings = configure_azure_sink(LoggingSettings(), logger_name="svc")
+    enabled, warnings = build_azure_sink(LoggingSettings(), logger_name="svc")
 
     assert enabled is True
     assert warnings == []
@@ -94,7 +94,7 @@ def test_configure_azure_monitor_called_with_connection_string(
     monkeypatch.setattr(_azure_mod, "_HAS_AZURE_MONITOR", True)
     monkeypatch.setattr(_azure_mod, "configure_azure_monitor", fake_configure)
 
-    configure_azure_sink(LoggingSettings(), logger_name="svc")
+    build_azure_sink(LoggingSettings(), logger_name="svc")
 
     assert calls[0]["connection_string"] == conn
 
@@ -111,7 +111,7 @@ def test_configure_azure_monitor_called_with_logger_name(
     monkeypatch.setattr(_azure_mod, "_HAS_AZURE_MONITOR", True)
     monkeypatch.setattr(_azure_mod, "configure_azure_monitor", fake_configure)
 
-    configure_azure_sink(LoggingSettings(), logger_name="my-service")
+    build_azure_sink(LoggingSettings(), logger_name="my-service")
 
     assert calls[0]["logger_name"] == "my-service"
 
@@ -137,7 +137,7 @@ def test_real_azure_package_if_installed(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(_azure_mod, "configure_azure_monitor", fake_configure)
     monkeypatch.setattr(_azure_mod, "_HAS_AZURE_MONITOR", True)
 
-    enabled, _warnings = configure_azure_sink(LoggingSettings(), logger_name="svc")
+    enabled, _warnings = build_azure_sink(LoggingSettings(), logger_name="svc")
 
     assert enabled is True
     assert len(calls) == 1

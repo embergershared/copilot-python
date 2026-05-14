@@ -7,19 +7,28 @@ import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
 
-from emm_logging._handlers.azure import configure_azure_sink
-from emm_logging._handlers.console import build_console_handler
-from emm_logging._handlers.seq import build_seq_handler
 from emm_logging.config import LoggingSettings
+from emm_logging.sinks.azure import build_azure_sink
+from emm_logging.sinks.console import build_console_sink
+from emm_logging.sinks.seq import build_seq_sink
 
 
 @dataclass
-class LoggingResult:
-    """Describe which logging sinks were configured."""
+class LoggingSinks:
+    """Describe which logging sinks were configured.
+
+    The dataclass form keeps the result lightweight (no Pydantic dependency)
+    and easy to inspect from tests or operator-facing diagnostics. The
+    ``service_name``/``service_version`` fields echo the active settings so
+    callers can correlate the sinks with the service identity that produced
+    them.
+    """
 
     console: bool
     seq: bool
     azure_monitor: bool
+    service_name: str = "unknown-service"
+    service_version: str = "0.0.0"
     warnings: list[str] = field(default_factory=list)
 
 
@@ -32,12 +41,19 @@ def _fallback_console_handler() -> logging.Handler:
     return fallback_handler
 
 
-def configure_logging(
+def setup_logging(
     settings: LoggingSettings | None = None,
     *,
     extra_handlers: list[logging.Handler] | None = None,
-) -> LoggingResult:
-    """Configure root logging with console output and optional remote sinks."""
+) -> LoggingSinks:
+    """Configure root logging with console output and optional remote sinks.
+
+    Pass an explicit :class:`LoggingSettings` instance to bypass environment
+    parsing (useful for tests or pre-validated settings). Additional
+    ``extra_handlers`` are attached to the root logger after the built-in
+    sinks. The function never raises: any catastrophic failure falls back to a
+    plain stderr console handler so the application keeps logging.
+    """
 
     warnings: list[str] = []
     seq_enabled = False
@@ -50,8 +66,9 @@ def configure_logging(
         sys.stderr.write(f"WARNING: failed to load logging settings; using defaults ({exc}).\n")
         active_settings = LoggingSettings(
             level="INFO",
-            format="json",
+            console_format="json",
             service_name="unknown-service",
+            service_version="0.0.0",
             seq_url=None,
             seq_api_key=None,
             azure_connection_string=None,
@@ -59,17 +76,17 @@ def configure_logging(
         warnings.append("Failed to load LOG_* settings; defaults were used.")
 
     try:
-        console_handler, console_warnings = build_console_handler(active_settings)
+        console_handler, console_warnings = build_console_sink(active_settings)
         warnings.extend(console_warnings)
         configured_handlers.append(console_handler)
 
-        seq_handler, seq_warnings = build_seq_handler(active_settings)
+        seq_handler, seq_warnings = build_seq_sink(active_settings)
         warnings.extend(seq_warnings)
         if seq_handler is not None:
             configured_handlers.append(seq_handler)
             seq_enabled = True
 
-        azure_enabled, azure_warnings = configure_azure_sink(
+        azure_enabled, azure_warnings = build_azure_sink(
             active_settings,
             logger_name=active_settings.service_name,
         )
@@ -103,11 +120,19 @@ def configure_logging(
         azure_enabled = False
 
     with suppress(Exception):
-        logging.getLogger(__name__).info("logging_configured")
+        logging.getLogger(__name__).info(
+            "logging_configured",
+            extra={
+                "service_name": active_settings.service_name,
+                "service_version": active_settings.service_version,
+            },
+        )
 
-    return LoggingResult(
+    return LoggingSinks(
         console=True,
         seq=seq_enabled,
         azure_monitor=azure_enabled,
+        service_name=active_settings.service_name,
+        service_version=active_settings.service_version,
         warnings=warnings,
     )

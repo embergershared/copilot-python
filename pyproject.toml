@@ -13,6 +13,7 @@ authors = [{ name = "Project maintainers" }]
 dependencies = [
   "fastapi>=0.115.0",
   "pydantic-settings>=2.6.0",
+  "python-dotenv>=1.0.0",
   "python-json-logger>=3.0.0",
   "uvicorn[standard]>=0.32.0",
 ]
@@ -39,7 +40,7 @@ dev = [
 Homepage = "https://github.com/"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/copilot_python_app", "src/emm_logging"]
+packages = ["src/copilot_python_app", "src/emm_logging", "src/emm_settings"]
 
 [tool.ruff]
 line-length = 100
@@ -55,12 +56,12 @@ warn_unused_configs = true
 files = ["src", "tests"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-markers --strict-config --cov=copilot_python_app --cov-report=term-missing"
+addopts = "--strict-markers --strict-config --cov=copilot_python_app --cov=emm_logging --cov=emm_settings --cov-report=term-missing"
 testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["copilot_python_app"]
+source = ["copilot_python_app", "emm_logging", "emm_settings"]
 
 [tool.coverage.report]
 show_missing = true
